@@ -15,6 +15,10 @@ pub enum Message {
     /// minus '-' character instead of a plus.
     Error(String),
 
+    /// Bulk Strings are used in order to represent a single binary-safe string
+    /// up to 512 MB in length.
+    BulkString(Option<Vec<u8>>),
+
     /// Arrays are collections of RESP commands. Notably, arrays are used to
     /// send commands from the client to the Redis server.
     Array(Vec<Message>),
@@ -36,6 +40,23 @@ impl Message {
                 writer.write_all(s.as_bytes())?;
                 writer.write_all(b"\r\n")?;
             }
+            Self::BulkString(s) => {
+                writer.write_all(b"$")?;
+                match s {
+                    None => {
+                        // Null strings are a bit special
+                        writer.write_all(b"-1")?;
+                        writer.write_all(b"\r\n")?;
+                        return Ok(());
+                    }
+                    Some(s) => {
+                        writer.write_all(s.len().to_string().as_bytes())?;
+                        writer.write_all(b"\r\n")?;
+                        writer.write_all(s)?;
+                        writer.write_all(b"\r\n")?;
+                    }
+                }
+            }
             Self::Array(msgs) => {
                 writer.write_all(b"*")?;
                 writer.write_all(msgs.len().to_string().as_bytes())?;
@@ -54,21 +75,42 @@ impl Message {
     where
         R: BufRead,
     {
-        let mut lines = reader.lines();
+        let mut line = String::new();
+        reader.read_line(&mut line)?;
+        let line = stripe_trailing_crlf(&line)?;
 
-        let first_line = match lines.next() {
-            Some(Ok(line)) => line,
-            Some(Err(e)) => return Err(e).wrap_err("error reading line"),
-            None => return Err(eyre!("no line in message")),
-        };
+        let resp = match line.chars().next() {
+            Some('+') => Ok(Self::SimpleString(line[1..].to_string())),
+            Some('-') => Ok(Self::Error(line[1..].to_string())),
+            Some('$') => {
+                let len: i32 = line[1..]
+                    .parse::<i32>()
+                    .wrap_err("invalid bulk string length")?;
 
-        match first_line.chars().next() {
-            Some('+') => Ok(Self::SimpleString(first_line[1..].to_string())),
-            Some('-') => Ok(Self::Error(first_line[1..].to_string())),
+                if len >= 0 {
+                    #[allow(clippy::cast_sign_loss)]
+                    let mut buf = vec![0; len as usize];
+                    reader
+                        .read_exact(&mut buf)
+                        .wrap_err(eyre!("failed to read into buf"))?;
+
+                    // Ensure trailing CRLF!
+                    let mut trailing_crlf = [0; 2];
+                    reader
+                        .read_exact(&mut trailing_crlf)
+                        .wrap_err(eyre!("failed to read trailing CRLF"))?;
+
+                    Ok(Self::BulkString(Some(buf)))
+                } else if len == -1 {
+                    Ok(Self::BulkString(None))
+                } else {
+                    Err(eyre!("invalid bulk string length"))
+                }
+            }
             Some('*') => {
-                let num_msgs = first_line[1..]
+                let num_msgs = line[1..]
                     .parse::<usize>()
-                    .wrap_err("invalid array length")?;
+                    .wrap_err("could not parse array length")?;
                 let mut msgs = Vec::with_capacity(num_msgs);
                 for i in 0..num_msgs {
                     msgs.push(
@@ -80,8 +122,15 @@ impl Message {
             }
             Some(c) => Err(eyre!("invalid message start: {c}")),
             None => Err(eyre!("empty message")),
-        }
+        };
+
+        resp
     }
+}
+
+fn stripe_trailing_crlf(s: &str) -> Result<&str> {
+    s.strip_suffix("\r\n")
+        .ok_or_else(|| eyre!("string does not end with CRLF"))
 }
 
 #[cfg(test)]
@@ -91,7 +140,12 @@ mod tests {
     fn assert_message_round_trip(msg: &Message, expected: &[u8]) {
         let mut buf = Vec::new();
         msg.serialize_resp(&mut buf).unwrap();
-        assert_eq!(buf, expected);
+        // N.B. Strings give clearer error message
+        // assert_eq!(buf, expected);
+        assert_eq!(
+            String::from_utf8(buf.clone()),
+            String::from_utf8(expected.to_vec())
+        );
         let msg2 = Message::parse_resp(&mut buf.as_slice()).unwrap();
         assert_eq!(msg, &msg2);
     }
@@ -106,6 +160,19 @@ mod tests {
         assert_message_round_trip(
             &Message::Error("ERROR my error".to_string()),
             b"-ERROR my error\r\n",
+        );
+    }
+
+    #[test]
+    fn bulk_string_round_trip() {
+        assert_message_round_trip(&Message::BulkString(None), b"$-1\r\n");
+        assert_message_round_trip(
+            &Message::BulkString(Some(b"hello".to_vec())),
+            b"$5\r\nhello\r\n",
+        );
+        assert_message_round_trip(
+            &Message::BulkString(Some(b"hello\r\nwith\r\nnewline".to_vec())),
+            b"$20\r\nhello\r\nwith\r\nnewline\r\n",
         );
     }
 
@@ -128,9 +195,10 @@ mod tests {
             &Message::Array(vec![
                 Message::Array(vec![Message::SimpleString("nested".to_string())]),
                 Message::SimpleString("OK".to_string()),
+                Message::BulkString(Some(b"hello\r\nwith\r\nnewline".to_vec())),
                 Message::SimpleString("blah".to_string()),
             ]),
-            b"*3\r\n*1\r\n+nested\r\n+OK\r\n+blah\r\n",
+            b"*4\r\n*1\r\n+nested\r\n+OK\r\n$20\r\nhello\r\nwith\r\nnewline\r\n+blah\r\n",
         );
     }
 }
