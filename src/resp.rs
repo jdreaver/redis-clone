@@ -5,7 +5,7 @@ use std::io::{BufRead, Write};
 
 use color_eyre::eyre::{eyre, Result, WrapErr};
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Message {
     /// Simple Strings are used to transmit non binary-safe strings with minimal
     /// overhead. They cannot contain a CR or LF character.
@@ -25,6 +25,10 @@ pub enum Message {
 }
 
 impl Message {
+    pub fn bulk_string(s: String) -> Self {
+        Self::BulkString(Some(s.into_bytes()))
+    }
+
     pub fn serialize_resp<W>(&self, writer: &mut W) -> Result<()>
     where
         W: Write,
