@@ -1,4 +1,4 @@
-use std::io::{Write, BufRead, BufReader};
+use std::io::{Write, BufReader};
 use std::net::TcpStream;
 
 use color_eyre::eyre::Result;
@@ -16,10 +16,7 @@ fn main() -> Result<()> {
     stream.flush()?;
 
     let mut reader = BufReader::new(stream);
-    let mut line = String::new();
-    reader.read_line(&mut line)?;
-
-    let response = Message::parse_resp_line(&line)?;
+    let response = Message::parse_resp(&mut reader)?;
     println!("Response: {response:?}");
 
     Ok(())

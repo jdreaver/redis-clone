@@ -1,9 +1,9 @@
 //! Implements the RESP (REdis Serialization Protocol) protocol. See
 //! <https://redis.io/docs/reference/protocol-spec/>.
 
-use std::io::Write;
+use std::io::{BufRead, Write};
 
-use color_eyre::eyre::{eyre, Result};
+use color_eyre::eyre::{eyre, Result, WrapErr};
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Message {
@@ -21,18 +21,26 @@ impl Message {
             Self::SimpleString(s) => {
                 writer.write_all(b"+")?;
                 writer.write_all(s.as_bytes())?;
+                writer.write_all(b"\r\n")?;
             }
         }
 
-        writer.write_all(b"\r\n")?;
         Ok(())
     }
 
-    // TODO: Commands can be multiple lines. We should pass in a BufReader or
-    // something in here.
-    pub fn parse_resp_line(line: &str) -> Result<Self> {
-        match line.chars().next() {
-            Some('+') => Ok(Self::SimpleString(line[1..].to_string())),
+    pub fn parse_resp<R>(reader: &mut R) -> Result<Self>
+    where R: BufRead,
+    {
+        let mut lines = reader.lines();
+
+        let first_line = match lines.next() {
+            Some(Ok(line)) => line,
+            Some(Err(e)) => return Err(e).wrap_err("error reading line"),
+            None => return Err(eyre!("no line in message")),
+        };
+
+        match first_line.chars().next() {
+            Some('+') => Ok(Self::SimpleString(first_line[1..].to_string())),
             Some(c) => Err(eyre!("invalid message start: {c}")),
             None => Err(eyre!("empty message")),
         }
@@ -51,8 +59,9 @@ mod tests {
     }
 
     #[test]
-    fn simple_parse_resp_line() {
-        let msg = Message::parse_resp_line("+OK").unwrap();
+    fn simple_parse_resp() {
+        let input = "+OK".to_string();
+        let msg = Message::parse_resp(&mut input.as_bytes()).unwrap();
         assert_eq!(msg, Message::SimpleString("OK".to_string()));
     }
 }
