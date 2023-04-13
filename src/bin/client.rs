@@ -10,14 +10,23 @@ fn main() -> Result<()> {
     let mut stream = TcpStream::connect("127.0.0.1:6379")?;
     let mut reader = BufReader::new(stream.try_clone().wrap_err("failed to clone stream")?);
 
-    let messages = vec!["PING", "nonsense"];
+    let messages = vec![
+        Message::Array(vec![Message::BulkString(Some(b"PING".to_vec()))]),
+        Message::Array(vec![Message::BulkString(Some(b"nonsense".to_vec()))]),
+        Message::Array(vec![
+            Message::BulkString(Some(b"SET".to_vec())),
+            Message::BulkString(Some(b"mykey".to_vec())),
+            Message::BulkString(Some(b"hello".to_vec())),
+        ]),
+        Message::Array(vec![
+            Message::BulkString(Some(b"GET".to_vec())),
+            Message::BulkString(Some(b"mykey".to_vec())),
+        ]),
+    ];
 
     for message in messages {
-        // TODO: Send ping using Message. I think we need to send
-        // "*1\r\n\$4\r\nPING\r\n" or "*1\r\n+PING\r\n"
-        println!("sending {}", message);
-        stream.write_all(message.as_bytes())?;
-        stream.write_all(b"\r\n")?;
+        println!("sending {:?}", message);
+        message.serialize_resp(&mut stream)?;
         stream.flush()?;
         let response = Message::parse_resp(&mut reader)?;
         println!("Response: {response:?}");
