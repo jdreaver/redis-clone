@@ -3,7 +3,7 @@ use std::net::TcpStream;
 
 use color_eyre::eyre::{eyre, Context, Result};
 
-use redis_clone::command::{Command, CommandResponse};
+use redis_clone::command::{Command, CommandResponse, Get, Set};
 use redis_clone::resp::Message;
 
 fn main() -> Result<()> {
@@ -15,15 +15,13 @@ fn main() -> Result<()> {
     let commands = vec![
         Command::Ping,
         Command::RawCommand(vec![Message::BulkString(Some(b"nonsense".to_vec()))]),
-        Command::RawCommand(vec![
-            Message::BulkString(Some(b"SET".to_vec())),
-            Message::BulkString(Some(b"mykey".to_vec())),
-            Message::BulkString(Some(b"hello".to_vec())),
-        ]),
-        Command::RawCommand(vec![
-            Message::BulkString(Some(b"GET".to_vec())),
-            Message::BulkString(Some(b"mykey".to_vec())),
-        ]),
+        Command::Set(Set {
+            key: "mykey".to_string(),
+            value: b"hello".to_vec(),
+        }),
+        Command::Get(Get {
+            key: "mykey".to_string(),
+        }),
     ];
 
     for command in commands {

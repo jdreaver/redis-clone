@@ -8,15 +8,37 @@ use color_eyre::eyre::{eyre, Result, WrapErr};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
     Ping,
+    Get(Get),
+    Set(Set),
 
     /// `RawCommand` is a command that is not supported by this library.
     RawCommand(Vec<Message>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Get {
+    pub key: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Set {
+    pub key: String,
+    pub value: Vec<u8>,
 }
 
 impl Command {
     pub fn to_resp(&self) -> Message {
         let args = match self {
             Self::Ping => vec![Message::bulk_string("PING".to_string())],
+            Self::Get(get) => vec![
+                Message::bulk_string("GET".to_string()),
+                Message::bulk_string(get.key.clone()),
+            ],
+            Self::Set(set) => vec![
+                Message::bulk_string("SET".to_string()),
+                Message::bulk_string(set.key.clone()),
+                Message::BulkString(Some(set.value.clone())),
+            ],
             Self::RawCommand(args) => args.clone(),
         };
         Message::Array(args)
@@ -37,6 +59,23 @@ impl Command {
 
         match cmd_str.to_uppercase().as_str() {
             "PING" => expect_no_args(Self::Ping, "PING", args),
+            "GET" => match args {
+                [Message::BulkString(Some(key))] => {
+                    let key = String::from_utf8(key.clone()).wrap_err("key must be valid UTF-8")?;
+                    Ok(Self::Get(Get { key }))
+                }
+                _ => Err(eyre!("GET must have a single key argument")),
+            },
+            "SET" => match args {
+                [Message::BulkString(Some(key)), Message::BulkString(Some(value))] => {
+                    let key = String::from_utf8(key.clone()).wrap_err("key must be valid UTF-8")?;
+                    Ok(Self::Set(Set {
+                        key,
+                        value: value.clone(),
+                    }))
+                }
+                _ => Err(eyre!("SET must have a key and value argument")),
+            },
             _ => Err(eyre!("unknown command: {cmd_str}")),
         }
     }
@@ -105,6 +144,36 @@ mod tests {
     #[test]
     fn ping_round_trip() {
         assert_command_round_trip(&Command::Ping, &[Message::bulk_string("PING".to_string())]);
+    }
+
+    #[test]
+    fn get_round_trip() {
+        let cmd = Command::Get(Get {
+            key: "foo".to_string(),
+        });
+        assert_command_round_trip(
+            &cmd,
+            &[
+                Message::bulk_string("GET".to_string()),
+                Message::bulk_string("foo".to_string()),
+            ],
+        );
+    }
+
+    #[test]
+    fn set_round_trip() {
+        let cmd = Command::Set(Set {
+            key: "foo".to_string(),
+            value: b"bar".to_vec(),
+        });
+        assert_command_round_trip(
+            &cmd,
+            &[
+                Message::bulk_string("SET".to_string()),
+                Message::bulk_string("foo".to_string()),
+                Message::BulkString(Some(b"bar".to_vec())),
+            ],
+        );
     }
 
     #[test]
