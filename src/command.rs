@@ -4,6 +4,8 @@ use crate::resp::Message;
 
 use color_eyre::eyre::{eyre, Result, WrapErr};
 
+use crate::string::RedisString;
+
 /// A `Command` is a well-formed Redis command.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
@@ -17,26 +19,26 @@ pub enum Command {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Get {
-    pub key: String,
+    pub key: RedisString,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Set {
-    pub key: String,
-    pub value: Vec<u8>,
+    pub key: RedisString,
+    pub value: RedisString,
 }
 
 impl Command {
     pub fn to_resp(&self) -> Message {
         let args = match self {
-            Self::Ping => vec![Message::bulk_string("PING".to_string())],
+            Self::Ping => vec![Message::bulk_string("PING")],
             Self::Get(get) => vec![
-                Message::bulk_string("GET".to_string()),
-                Message::bulk_string(get.key.clone()),
+                Message::bulk_string("GET"),
+                Message::BulkString(Some(get.key.clone())),
             ],
             Self::Set(set) => vec![
-                Message::bulk_string("SET".to_string()),
-                Message::bulk_string(set.key.clone()),
+                Message::bulk_string("SET"),
+                Message::BulkString(Some(set.key.clone())),
                 Message::BulkString(Some(set.value.clone())),
             ],
             Self::RawCommand(args) => args.clone(),
@@ -52,7 +54,7 @@ impl Command {
         let cmd_str: String = match cmd_message {
             Message::SimpleString(cmd_str) => cmd_str.clone(),
             Message::BulkString(Some(cmd_str)) => {
-                String::from_utf8(cmd_str.clone()).wrap_err("command name must be valid UTF-8")?
+                String::try_from(cmd_str.clone()).wrap_err("command name must be valid UTF-8")?
             }
             _ => return Err(eyre!("command name must be bulk or simple string")),
         };
@@ -60,17 +62,13 @@ impl Command {
         match cmd_str.to_uppercase().as_str() {
             "PING" => expect_no_args(Self::Ping, "PING", args),
             "GET" => match args {
-                [Message::BulkString(Some(key))] => {
-                    let key = String::from_utf8(key.clone()).wrap_err("key must be valid UTF-8")?;
-                    Ok(Self::Get(Get { key }))
-                }
+                [Message::BulkString(Some(key))] => Ok(Self::Get(Get { key: key.clone() })),
                 _ => Err(eyre!("GET must have a single key argument")),
             },
             "SET" => match args {
                 [Message::BulkString(Some(key)), Message::BulkString(Some(value))] => {
-                    let key = String::from_utf8(key.clone()).wrap_err("key must be valid UTF-8")?;
                     Ok(Self::Set(Set {
-                        key,
+                        key: key.clone(),
                         value: value.clone(),
                     }))
                 }
@@ -95,7 +93,7 @@ pub enum CommandResponse {
     Pong,
     Ok,
     Error(String),
-    BulkString(Option<Vec<u8>>),
+    BulkString(Option<RedisString>),
 }
 
 impl CommandResponse {
@@ -143,35 +141,32 @@ mod tests {
 
     #[test]
     fn ping_round_trip() {
-        assert_command_round_trip(&Command::Ping, &[Message::bulk_string("PING".to_string())]);
+        assert_command_round_trip(&Command::Ping, &[Message::bulk_string("PING")]);
     }
 
     #[test]
     fn get_round_trip() {
         let cmd = Command::Get(Get {
-            key: "foo".to_string(),
+            key: RedisString::from("foo"),
         });
         assert_command_round_trip(
             &cmd,
-            &[
-                Message::bulk_string("GET".to_string()),
-                Message::bulk_string("foo".to_string()),
-            ],
+            &[Message::bulk_string("GET"), Message::bulk_string("foo")],
         );
     }
 
     #[test]
     fn set_round_trip() {
         let cmd = Command::Set(Set {
-            key: "foo".to_string(),
-            value: b"bar".to_vec(),
+            key: RedisString::from("foo"),
+            value: RedisString::from("bar"),
         });
         assert_command_round_trip(
             &cmd,
             &[
-                Message::bulk_string("SET".to_string()),
-                Message::bulk_string("foo".to_string()),
-                Message::BulkString(Some(b"bar".to_vec())),
+                Message::bulk_string("SET"),
+                Message::bulk_string("foo"),
+                Message::bulk_string("bar"),
             ],
         );
     }

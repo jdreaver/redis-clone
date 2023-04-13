@@ -5,6 +5,8 @@ use std::io::{BufRead, Write};
 
 use color_eyre::eyre::{eyre, Result, WrapErr};
 
+use crate::string::RedisString;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Message {
     /// Simple Strings are used to transmit non binary-safe strings with minimal
@@ -17,7 +19,7 @@ pub enum Message {
 
     /// Bulk Strings are used in order to represent a single binary-safe string
     /// up to 512 MB in length.
-    BulkString(Option<Vec<u8>>),
+    BulkString(Option<RedisString>),
 
     /// Arrays are collections of RESP commands. Notably, arrays are used to
     /// send commands from the client to the Redis server.
@@ -25,8 +27,8 @@ pub enum Message {
 }
 
 impl Message {
-    pub fn bulk_string(s: String) -> Self {
-        Self::BulkString(Some(s.into_bytes()))
+    pub fn bulk_string(s: &str) -> Self {
+        Self::BulkString(Some(RedisString::from(s)))
     }
 
     pub fn serialize_resp<W>(&self, writer: &mut W) -> Result<()>
@@ -56,7 +58,7 @@ impl Message {
                     Some(s) => {
                         writer.write_all(s.len().to_string().as_bytes())?;
                         writer.write_all(b"\r\n")?;
-                        writer.write_all(s)?;
+                        writer.write_all(s.as_bytes())?;
                         writer.write_all(b"\r\n")?;
                     }
                 }
@@ -104,7 +106,7 @@ impl Message {
                         .read_exact(&mut trailing_crlf)
                         .wrap_err(eyre!("failed to read trailing CRLF"))?;
 
-                    Ok(Self::BulkString(Some(buf)))
+                    Ok(Self::BulkString(Some(RedisString::from(buf))))
                 } else if len == -1 {
                     Ok(Self::BulkString(None))
                 } else {
@@ -171,11 +173,11 @@ mod tests {
     fn bulk_string_round_trip() {
         assert_message_round_trip(&Message::BulkString(None), b"$-1\r\n");
         assert_message_round_trip(
-            &Message::BulkString(Some(b"hello".to_vec())),
+            &Message::BulkString(Some(RedisString::from("hello"))),
             b"$5\r\nhello\r\n",
         );
         assert_message_round_trip(
-            &Message::BulkString(Some(b"hello\r\nwith\r\nnewline".to_vec())),
+            &Message::BulkString(Some(RedisString::from("hello\r\nwith\r\nnewline"))),
             b"$20\r\nhello\r\nwith\r\nnewline\r\n",
         );
     }
@@ -199,7 +201,7 @@ mod tests {
             &Message::Array(vec![
                 Message::Array(vec![Message::SimpleString("nested".to_string())]),
                 Message::SimpleString("OK".to_string()),
-                Message::BulkString(Some(b"hello\r\nwith\r\nnewline".to_vec())),
+                Message::BulkString(Some(RedisString::from("hello\r\nwith\r\nnewline"))),
                 Message::SimpleString("blah".to_string()),
             ]),
             b"*4\r\n*1\r\n+nested\r\n+OK\r\n$20\r\nhello\r\nwith\r\nnewline\r\n+blah\r\n",

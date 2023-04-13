@@ -5,6 +5,7 @@ use color_eyre::eyre::{eyre, Context, Result};
 
 use redis_clone::command::{Command, CommandResponse, Get, Set};
 use redis_clone::resp::Message;
+use redis_clone::string::RedisString;
 
 fn main() -> Result<()> {
     color_eyre::install()?;
@@ -14,13 +15,13 @@ fn main() -> Result<()> {
 
     let commands = vec![
         Command::Ping,
-        Command::RawCommand(vec![Message::BulkString(Some(b"nonsense".to_vec()))]),
+        Command::RawCommand(vec![Message::bulk_string("nonsense")]),
         Command::Set(Set {
-            key: "mykey".to_string(),
-            value: b"hello".to_vec(),
+            key: RedisString::from("mykey"),
+            value: RedisString::from("hello"),
         }),
         Command::Get(Get {
-            key: "mykey".to_string(),
+            key: RedisString::from("mykey"),
         }),
     ];
 
