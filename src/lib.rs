@@ -4,7 +4,7 @@
     clippy::doc_markdown,
     clippy::missing_errors_doc,
     clippy::must_use_candidate,
-    clippy::new_without_default,
+    clippy::new_without_default
 )]
 
 pub mod resp;

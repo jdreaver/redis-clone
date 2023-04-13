@@ -1,4 +1,4 @@
-use std::io::{Write, BufReader};
+use std::io::{BufReader, Write};
 use std::net::TcpStream;
 
 use color_eyre::eyre::Result;

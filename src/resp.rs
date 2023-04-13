@@ -29,7 +29,8 @@ impl Message {
     }
 
     pub fn parse_resp<R>(reader: &mut R) -> Result<Self>
-    where R: BufRead,
+    where
+        R: BufRead,
     {
         let mut lines = reader.lines();
 
@@ -54,7 +55,9 @@ mod tests {
     #[test]
     fn simple_serialize_to_resp() {
         let mut buf = Vec::new();
-        Message::SimpleString("OK".to_string()).serialize_resp(&mut buf).unwrap();
+        Message::SimpleString("OK".to_string())
+            .serialize_resp(&mut buf)
+            .unwrap();
         assert_eq!(buf, b"+OK\r\n");
     }
 
