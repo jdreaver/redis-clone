@@ -46,7 +46,7 @@ impl Command {
         Message::Array(args)
     }
 
-    pub fn parse_resp(resp: Message) -> Result<Self> {
+    pub fn parse_resp(resp: &Message) -> Result<Self> {
         let Message::Array(elems) = resp else { return Err(eyre!("commands must be an array")) };
 
         let Some((cmd_message, args)) = elems.split_first() else { return Err(eyre!("commands must have at least one element")) };
@@ -128,7 +128,7 @@ mod tests {
         let expected = Message::Array(expected.to_vec());
         let got = cmd.to_resp();
         assert_eq!(got, expected);
-        let cmd2 = Command::parse_resp(got).unwrap();
+        let cmd2 = Command::parse_resp(&got).unwrap();
         assert_eq!(cmd, &cmd2);
     }
 

@@ -83,7 +83,13 @@ impl Message {
     {
         let mut line = String::new();
         reader.read_line(&mut line)?;
-        let line = stripe_trailing_crlf(&line)?;
+
+        if line.is_empty() {
+            return Err(eyre!("empty message"));
+        }
+
+        let line = strip_trailing_crlf(&line)
+            .wrap_err_with(|| eyre!("line didn't end with CRLF: {line:?}"))?;
 
         let resp = match line.chars().next() {
             Some('+') => Ok(Self::SimpleString(line[1..].to_string())),
@@ -134,7 +140,7 @@ impl Message {
     }
 }
 
-fn stripe_trailing_crlf(s: &str) -> Result<&str> {
+fn strip_trailing_crlf(s: &str) -> Result<&str> {
     s.strip_suffix("\r\n")
         .ok_or_else(|| eyre!("string does not end with CRLF"))
 }
@@ -142,6 +148,16 @@ fn stripe_trailing_crlf(s: &str) -> Result<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use std::io::BufReader;
+
+    #[test]
+    fn parse_empty_string() {
+        let mut buf = BufReader::new(b"" as &[u8]);
+        let msg = Message::parse_resp(&mut buf);
+        assert!(msg.is_err());
+        assert_eq!(msg.unwrap_err().to_string(), "empty message");
+    }
 
     fn assert_message_round_trip(msg: &Message, expected: &[u8]) {
         let mut buf = Vec::new();
