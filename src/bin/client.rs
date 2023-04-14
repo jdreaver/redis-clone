@@ -1,4 +1,4 @@
-use std::io::{BufReader, Write};
+use std::io::{BufReader, BufWriter, Write};
 use std::net::TcpStream;
 
 use color_eyre::eyre::{eyre, Context, Result};
@@ -10,7 +10,9 @@ use redis_clone::string::RedisString;
 fn main() -> Result<()> {
     color_eyre::install()?;
 
-    let mut stream = TcpStream::connect("127.0.0.1:6379")?;
+    let stream = TcpStream::connect("127.0.0.1:6379")?;
+    let mut write_stream = stream.try_clone().expect("failed to clone stream");
+    let mut writer = BufWriter::new(&mut write_stream);
     let mut reader = BufReader::new(stream.try_clone().wrap_err("failed to clone stream")?);
 
     let commands = vec![
@@ -28,8 +30,8 @@ fn main() -> Result<()> {
     for command in commands {
         println!("Command:  {:?}", command);
         let message = command.to_resp();
-        message.serialize_resp(&mut stream)?;
-        stream.flush()?;
+        message.serialize_resp(&mut writer)?;
+        writer.flush()?;
         let response = Message::parse_resp(&mut reader)
             .wrap_err(eyre!("failed to parse response"))?
             .ok_or(eyre!("response was empty"))?;

@@ -1,5 +1,5 @@
-use std::io::BufReader;
-use std::net::{TcpListener, TcpStream};
+use std::io::{BufReader, BufWriter, Read, Write};
+use std::net::TcpListener;
 use std::thread;
 
 use color_eyre::eyre::Result;
@@ -21,7 +21,8 @@ fn main() -> Result<()> {
 
         // Spawn a thread to handle this client.
         thread::spawn(move || {
-            let mut writer = stream.try_clone().expect("failed to clone stream");
+            let mut write_stream = stream.try_clone().expect("failed to clone stream");
+            let mut writer = BufWriter::new(&mut write_stream);
             let mut reader = BufReader::new(&mut stream);
 
             if let Err(e) = client_loop(&mut reader, &mut writer) {
@@ -32,7 +33,11 @@ fn main() -> Result<()> {
     }
 }
 
-fn client_loop(reader: &mut BufReader<&mut TcpStream>, writer: &mut TcpStream) -> Result<()> {
+fn client_loop<R, W>(reader: &mut BufReader<&mut R>, writer: &mut BufWriter<&mut W>) -> Result<()>
+where
+    R: Read,
+    W: Write,
+{
     // TODO: Don't have a single server per thread. Have threads send
     // commands to server.
     let mut server = Server::new();
@@ -44,15 +49,19 @@ fn client_loop(reader: &mut BufReader<&mut TcpStream>, writer: &mut TcpStream) -
         response
             .serialize_resp(writer)
             .expect("error in client thread");
+        writer.flush()?;
     }
 
     Ok(())
 }
 
-fn process_next_message(
+fn process_next_message<R>(
     server: &mut Server,
-    reader: &mut BufReader<&mut TcpStream>,
-) -> Option<CommandResponse> {
+    reader: &mut BufReader<&mut R>,
+) -> Option<CommandResponse>
+where
+    R: Read,
+{
     let message = match Message::parse_resp(reader) {
         Ok(Some(m)) => m,
         Ok(None) => {
