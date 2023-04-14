@@ -77,7 +77,10 @@ impl Message {
         Ok(())
     }
 
-    pub fn parse_resp<R>(reader: &mut R) -> Result<Self>
+    /// Reads data from the given reader and parses it into a `Message`.
+    ///
+    /// A return value of `Ok(None)` indicates that the reader is empty.
+    pub fn parse_resp<R>(reader: &mut R) -> Result<Option<Self>>
     where
         R: BufRead,
     {
@@ -85,15 +88,15 @@ impl Message {
         reader.read_line(&mut line)?;
 
         if line.is_empty() {
-            return Err(eyre!("empty message"));
+            return Ok(None);
         }
 
         let line = strip_trailing_crlf(&line)
             .wrap_err_with(|| eyre!("line didn't end with CRLF: {line:?}"))?;
 
         let resp = match line.chars().next() {
-            Some('+') => Ok(Self::SimpleString(line[1..].to_string())),
-            Some('-') => Ok(Self::Error(line[1..].to_string())),
+            Some('+') => Self::SimpleString(line[1..].to_string()),
+            Some('-') => Self::Error(line[1..].to_string()),
             Some('$') => {
                 let len: i32 = line[1..]
                     .parse::<i32>()
@@ -112,11 +115,11 @@ impl Message {
                         .read_exact(&mut trailing_crlf)
                         .wrap_err(eyre!("failed to read trailing CRLF"))?;
 
-                    Ok(Self::BulkString(Some(RedisString::from(buf))))
+                    Self::BulkString(Some(RedisString::from(buf)))
                 } else if len == -1 {
-                    Ok(Self::BulkString(None))
+                    Self::BulkString(None)
                 } else {
-                    Err(eyre!("invalid bulk string length"))
+                    return Err(eyre!("invalid bulk string length"));
                 }
             }
             Some('*') => {
@@ -125,18 +128,23 @@ impl Message {
                     .wrap_err("could not parse array length")?;
                 let mut msgs = Vec::with_capacity(num_msgs);
                 for i in 0..num_msgs {
-                    msgs.push(
-                        Self::parse_resp(reader)
-                            .wrap_err(eyre!("failed to parse array elem {i}"))?,
-                    );
+                    let msg = Self::parse_resp(reader)
+                        .wrap_err(eyre!("failed to parse array elem {i}"))?
+                        .ok_or_else(|| eyre!("empty string at array elem {i}"))?;
+
+                    msgs.push(msg);
                 }
-                Ok(Self::Array(msgs))
+                Self::Array(msgs)
             }
-            Some(c) => Err(eyre!("invalid message start: {c}")),
-            None => Err(eyre!("empty message")),
+            Some(c) => return Err(eyre!("invalid message start: {c}")),
+            None => {
+                return Err(eyre!(
+                    "somehow no char even though we checked for empty string"
+                ))
+            }
         };
 
-        resp
+        Ok(Some(resp))
     }
 }
 
@@ -154,12 +162,11 @@ mod tests {
     #[test]
     fn parse_empty_string() {
         let mut buf = BufReader::new(b"" as &[u8]);
-        let msg = Message::parse_resp(&mut buf);
-        assert!(msg.is_err());
-        assert_eq!(msg.unwrap_err().to_string(), "empty message");
+        let msg = Message::parse_resp(&mut buf).unwrap();
+        assert_eq!(msg, None);
     }
 
-    fn assert_message_round_trip(msg: &Message, expected: &[u8]) {
+    fn assert_message_round_trip(msg: Message, expected: &[u8]) {
         let mut buf = Vec::new();
         msg.serialize_resp(&mut buf).unwrap();
         // N.B. Strings give clearer error message
@@ -169,44 +176,44 @@ mod tests {
             String::from_utf8(expected.to_vec())
         );
         let msg2 = Message::parse_resp(&mut buf.as_slice()).unwrap();
-        assert_eq!(msg, &msg2);
+        assert_eq!(Some(msg), msg2);
     }
 
     #[test]
     fn simple_string_round_trip() {
-        assert_message_round_trip(&Message::SimpleString("OK".to_string()), b"+OK\r\n");
+        assert_message_round_trip(Message::SimpleString("OK".to_string()), b"+OK\r\n");
     }
 
     #[test]
     fn error_round_trip() {
         assert_message_round_trip(
-            &Message::Error("ERROR my error".to_string()),
+            Message::Error("ERROR my error".to_string()),
             b"-ERROR my error\r\n",
         );
     }
 
     #[test]
     fn bulk_string_round_trip() {
-        assert_message_round_trip(&Message::BulkString(None), b"$-1\r\n");
+        assert_message_round_trip(Message::BulkString(None), b"$-1\r\n");
         assert_message_round_trip(
-            &Message::BulkString(Some(RedisString::from("hello"))),
+            Message::BulkString(Some(RedisString::from("hello"))),
             b"$5\r\nhello\r\n",
         );
         assert_message_round_trip(
-            &Message::BulkString(Some(RedisString::from("hello\r\nwith\r\nnewline"))),
+            Message::BulkString(Some(RedisString::from("hello\r\nwith\r\nnewline"))),
             b"$20\r\nhello\r\nwith\r\nnewline\r\n",
         );
     }
 
     #[test]
     fn array_round_trip() {
-        assert_message_round_trip(&Message::Array(Vec::new()), b"*0\r\n");
+        assert_message_round_trip(Message::Array(Vec::new()), b"*0\r\n");
         assert_message_round_trip(
-            &Message::Array(vec![Message::SimpleString("OK".to_string())]),
+            Message::Array(vec![Message::SimpleString("OK".to_string())]),
             b"*1\r\n+OK\r\n",
         );
         assert_message_round_trip(
-            &Message::Array(vec![
+            Message::Array(vec![
                 Message::SimpleString("OK".to_string()),
                 Message::SimpleString("blah".to_string()),
             ]),
@@ -214,7 +221,7 @@ mod tests {
         );
 
         assert_message_round_trip(
-            &Message::Array(vec![
+            Message::Array(vec![
                 Message::Array(vec![Message::SimpleString("nested".to_string())]),
                 Message::SimpleString("OK".to_string()),
                 Message::BulkString(Some(RedisString::from("hello\r\nwith\r\nnewline"))),

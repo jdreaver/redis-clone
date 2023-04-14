@@ -37,8 +37,7 @@ fn client_loop(reader: &mut BufReader<&mut TcpStream>, writer: &mut TcpStream) -
     // commands to server.
     let mut server = Server::new();
 
-    loop {
-        let response = process_next_message(&mut server, reader);
+    while let Some(response) = process_next_message(&mut server, reader) {
         let response = response.to_resp();
 
         println!("sending response: {:?}", response);
@@ -46,16 +45,24 @@ fn client_loop(reader: &mut BufReader<&mut TcpStream>, writer: &mut TcpStream) -
             .serialize_resp(writer)
             .expect("error in client thread");
     }
+
+    Ok(())
 }
 
 fn process_next_message(
     server: &mut Server,
     reader: &mut BufReader<&mut TcpStream>,
-) -> CommandResponse {
+) -> Option<CommandResponse> {
     let message = match Message::parse_resp(reader) {
-        Ok(m) => m,
+        Ok(Some(m)) => m,
+        Ok(None) => {
+            return None;
+        }
         Err(e) => {
-            return CommandResponse::Error(format!("error parsing message: {}", e));
+            return Some(CommandResponse::Error(format!(
+                "error parsing message: {}",
+                e
+            )));
         }
     };
     println!("received message: {:?}", message);
@@ -63,7 +70,7 @@ fn process_next_message(
     let command = match Command::parse_resp(&message) {
         Ok(c) => c,
         Err(e) => {
-            return CommandResponse::Error(format!("error parsing RESP: {}", e));
+            return Some(CommandResponse::Error(format!("error parsing RESP: {}", e)));
         }
     };
     println!("parsed command: {:?}", command);
@@ -71,11 +78,14 @@ fn process_next_message(
     let response = match server.process_command(command) {
         Ok(r) => r,
         Err(e) => {
-            return CommandResponse::Error(format!("error processing command: {}", e));
+            return Some(CommandResponse::Error(format!(
+                "error processing command: {}",
+                e
+            )));
         }
     };
 
     println!("SERVER STATE: {:?}", server);
 
-    response
+    Some(response)
 }

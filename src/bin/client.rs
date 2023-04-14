@@ -30,7 +30,9 @@ fn main() -> Result<()> {
         let message = command.to_resp();
         message.serialize_resp(&mut stream)?;
         stream.flush()?;
-        let response = Message::parse_resp(&mut reader)?;
+        let response = Message::parse_resp(&mut reader)
+            .wrap_err(eyre!("failed to parse response"))?
+            .ok_or(eyre!("response was empty"))?;
         let response = CommandResponse::parse_resp(response.clone())
             .wrap_err(eyre!("failed to parse {response:?}"))?;
         println!("Response: {response:?}");
