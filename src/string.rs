@@ -5,7 +5,7 @@ use std::fmt;
 /// A Redis string. This is a wrapper around a `Vec<u8>` that implements `Debug`
 /// in a way that tries to print the string as UTF-8 if possible, and otherwise
 /// prints the raw bytes. Also provides convenience `From` implementations.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub struct RedisString(Vec<u8>);
 
 // This custom Debug impl is the main reason this type exists.

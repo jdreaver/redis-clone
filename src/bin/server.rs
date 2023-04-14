@@ -2,11 +2,11 @@ use std::io::BufReader;
 use std::net::{TcpListener, TcpStream};
 use std::thread;
 
-use color_eyre::eyre::{Context, Result};
+use color_eyre::eyre::Result;
 
-use redis_clone::command::{Command, CommandResponse, Get, Set};
+use redis_clone::command::{Command, CommandResponse};
 use redis_clone::resp::Message;
-use redis_clone::string::RedisString;
+use redis_clone::server::Server;
 
 fn main() -> Result<()> {
     color_eyre::install()?;
@@ -33,29 +33,49 @@ fn main() -> Result<()> {
 }
 
 fn client_loop(reader: &mut BufReader<&mut TcpStream>, writer: &mut TcpStream) -> Result<()> {
+    // TODO: Don't have a single server per thread. Have threads send
+    // commands to server.
+    let mut server = Server::new();
+
     loop {
-        let message = Message::parse_resp(reader).wrap_err("failed to parse message")?;
-        println!("received message: {:?}", message);
-
-        let command = Command::parse_resp(&message);
-        println!("parsed command: {:?}", command);
-
-        let response = match command {
-            Ok(Command::Ping) => CommandResponse::Pong,
-            Ok(Command::Get(Get { key })) => {
-                CommandResponse::BulkString(Some(RedisString::from(format!("got {key:?}"))))
-            }
-            Ok(Command::Set(Set { key, value })) => CommandResponse::BulkString(Some(
-                RedisString::from(format!("set {key:?} to {value:?}")),
-            )),
-            Ok(Command::RawCommand(c)) => CommandResponse::Error(format!("unknown command: {c:?}")),
-            Err(e) => CommandResponse::Error(format!("error parsing command: {e}")),
-        };
-
+        let response = process_next_message(&mut server, reader);
         let response = response.to_resp();
+
         println!("sending response: {:?}", response);
         response
             .serialize_resp(writer)
-            .expect("error in client thread: ");
+            .expect("error in client thread");
     }
+}
+
+fn process_next_message(
+    server: &mut Server,
+    reader: &mut BufReader<&mut TcpStream>,
+) -> CommandResponse {
+    let message = match Message::parse_resp(reader) {
+        Ok(m) => m,
+        Err(e) => {
+            return CommandResponse::Error(format!("error parsing message: {}", e));
+        }
+    };
+    println!("received message: {:?}", message);
+
+    let command = match Command::parse_resp(&message) {
+        Ok(c) => c,
+        Err(e) => {
+            return CommandResponse::Error(format!("error parsing RESP: {}", e));
+        }
+    };
+    println!("parsed command: {:?}", command);
+
+    let response = match server.process_command(command) {
+        Ok(r) => r,
+        Err(e) => {
+            return CommandResponse::Error(format!("error processing command: {}", e));
+        }
+    };
+
+    println!("SERVER STATE: {:?}", server);
+
+    response
 }
