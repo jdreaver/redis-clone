@@ -1,4 +1,4 @@
-use std::io::{BufReader, BufWriter, Read, Write};
+use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::net::TcpListener;
 use std::thread;
 
@@ -33,9 +33,9 @@ fn main() -> Result<()> {
     }
 }
 
-fn client_loop<R, W>(reader: &mut BufReader<&mut R>, writer: &mut BufWriter<&mut W>) -> Result<()>
+fn client_loop<R, W>(reader: &mut R, writer: &mut BufWriter<&mut W>) -> Result<()>
 where
-    R: Read,
+    R: BufRead,
     W: Write,
 {
     // TODO: Don't have a single server per thread. Have threads send
@@ -55,12 +55,9 @@ where
     Ok(())
 }
 
-fn process_next_message<R>(
-    server: &mut Server,
-    reader: &mut BufReader<&mut R>,
-) -> Option<CommandResponse>
+fn process_next_message<R>(server: &mut Server, reader: &mut R) -> Option<CommandResponse>
 where
-    R: Read,
+    R: BufRead,
 {
     let message = match Message::parse_resp(reader) {
         Ok(Some(m)) => m,

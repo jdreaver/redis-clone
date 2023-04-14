@@ -1,7 +1,7 @@
 //! Implements the RESP (REdis Serialization Protocol) protocol. See
 //! <https://redis.io/docs/reference/protocol-spec/>.
 
-use std::io::{BufRead, Write};
+use std::io::{BufRead, BufWriter, Write};
 
 use color_eyre::eyre::{eyre, Result, WrapErr};
 
@@ -31,7 +31,7 @@ impl Message {
         Self::BulkString(Some(RedisString::from(s)))
     }
 
-    pub fn serialize_resp<W>(&self, writer: &mut W) -> Result<()>
+    pub fn serialize_resp<W>(&self, writer: &mut BufWriter<&mut W>) -> Result<()>
     where
         W: Write,
     {
@@ -168,7 +168,9 @@ mod tests {
 
     fn assert_message_round_trip(msg: Message, expected: &[u8]) {
         let mut buf = Vec::new();
-        msg.serialize_resp(&mut buf).unwrap();
+        let mut buf_writer = BufWriter::new(&mut buf);
+        msg.serialize_resp(&mut buf_writer).unwrap();
+        drop(buf_writer);
         // N.B. Strings give clearer error message
         // assert_eq!(buf, expected);
         assert_eq!(
