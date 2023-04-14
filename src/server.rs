@@ -1,8 +1,8 @@
 //! Core server functionality for redis-clone.
 
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, BufWriter, Write};
-use std::net::TcpListener;
+use std::io::{BufReader, BufWriter, Write};
+use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
@@ -14,19 +14,36 @@ use crate::resp::Message;
 use crate::string::RedisString;
 
 /// A `Server` is a redis-clone server.
+///
+/// It contains a single core worker thread that processes commands and stores
+/// data. Each client connection is handled by a separate thread that
+/// communicates with the core worker thread via channels.
 #[derive(Debug)]
 pub struct Server {
     next_thread_id: ThreadId,
+
+    /// Used for child threads to register their response channels so the core
+    /// worker thread knows where to send responses.
     response_channels: Arc<Mutex<HashMap<ThreadId, Sender<CommandResponse>>>>,
+
+    /// Used for sending commands to the core worker thread.
+    command_sender: Sender<(ThreadId, Command)>,
+
+    /// Used for the core worker thread to receive commands for processing.
+    command_receiver: Receiver<(ThreadId, Command)>,
 }
 
 type ThreadId = usize;
 
 impl Server {
     pub fn new() -> Self {
+        let (command_sender, command_receiver) =
+            crossbeam_channel::unbounded::<(ThreadId, Command)>();
         Self {
             next_thread_id: 0,
             response_channels: Arc::new(Mutex::new(HashMap::new())),
+            command_sender,
+            command_receiver,
         }
     }
 
@@ -40,9 +57,18 @@ impl Server {
     where
         A: std::net::ToSocketAddrs,
     {
-        // Start core worker thread.
-        let (command_sender, command_receiver) =
-            crossbeam_channel::unbounded::<(ThreadId, Command)>();
+        self.start_core_worker_thread();
+
+        let listener = TcpListener::bind(addr).wrap_err_with(|| eyre!("failed to start server"))?;
+        println!("Listening on {}", listener.local_addr()?);
+
+        loop {
+            self.start_next_client_thread(&listener)?;
+        }
+    }
+
+    fn start_core_worker_thread(&mut self) {
+        let command_receiver = self.command_receiver.clone();
         let core_response_channels = self.response_channels.clone();
         thread::spawn(move || {
             let mut core = ServerCore::new();
@@ -60,107 +86,126 @@ impl Server {
             }
         });
 
-        let listener = TcpListener::bind(addr).wrap_err_with(|| eyre!("failed to start server"))?;
+        // TODO - handle shutdown
+    }
 
-        println!("Listening on {}", listener.local_addr()?);
+    fn start_next_client_thread(&mut self, listener: &TcpListener) -> Result<()> {
+        // Wait for a client to connect.
+        let (stream, addr) = listener.accept()?;
+        println!("connection received from {addr}");
 
-        loop {
-            // Wait for a client to connect.
-            let (mut stream, addr) = listener.accept()?;
-            println!("connection received from {addr}");
-
-            // Create thread ID and channel for this client.
-            let mut command_sender = command_sender.clone();
-            let (response_sender, mut response_receiver) =
-                crossbeam_channel::unbounded::<CommandResponse>();
-            let thread_id = self.get_thread_id();
+        // Create thread ID and channel for this client.
+        let (response_sender, response_receiver) =
+            crossbeam_channel::unbounded::<CommandResponse>();
+        let thread_id = self.get_thread_id();
+        {
+            // New scope to ensure lock is released before we spawn the thread.
             self.response_channels
                 .lock()
-                .expect("couldn't lock response channels")
+                .map_err(|_| {
+                    eyre!("lock was poisoned during a previous access and can no longer be locked")
+                })?
                 .insert(thread_id, response_sender);
-
-            thread::spawn(move || {
-                let mut write_stream = stream.try_clone().expect("failed to clone stream");
-                let mut writer = BufWriter::new(&mut write_stream);
-                let mut reader = BufReader::new(&mut stream);
-
-                if let Err(e) = client_loop(
-                    thread_id,
-                    &mut reader,
-                    &mut writer,
-                    &mut command_sender,
-                    &mut response_receiver,
-                ) {
-                    eprintln!("error in client thread: {e}");
-                }
-                println!("connection closed for addr {addr}");
-            });
         }
+
+        let mut client_thread = ClientThread::new(
+            thread_id,
+            addr.to_string(),
+            self.command_sender.clone(),
+            response_receiver,
+            stream,
+        );
+        thread::spawn(move || client_thread.run_loop());
+
+        Ok(())
     }
 }
 
-fn client_loop<R, W>(
+#[derive(Debug)]
+struct ClientThread {
     thread_id: ThreadId,
-    reader: &mut R,
-    writer: &mut BufWriter<&mut W>,
-    send_command: &mut Sender<(ThreadId, Command)>,
-    recv_response: &mut Receiver<CommandResponse>,
-) -> Result<()>
-where
-    R: BufRead,
-    W: Write,
-{
-    while let Some(response) = process_next_message(thread_id, reader, send_command, recv_response)
-    {
-        let response = response.to_resp();
-
-        println!("sending response: {response:?}");
-        response
-            .serialize_resp(writer)
-            .expect("error in client thread");
-        writer.flush()?;
-    }
-
-    Ok(())
+    client_addr: String,
+    command_sender: Sender<(ThreadId, Command)>,
+    response_receiver: Receiver<CommandResponse>,
+    writer: BufWriter<TcpStream>,
+    reader: BufReader<TcpStream>,
 }
 
-fn process_next_message<R>(
-    thread_id: ThreadId,
-    reader: &mut R,
-    send_command: &mut Sender<(ThreadId, Command)>,
-    recv_response: &mut Receiver<CommandResponse>,
-) -> Option<CommandResponse>
-where
-    R: BufRead,
-{
-    let message = match Message::parse_resp(reader) {
-        Ok(Some(m)) => m,
-        Ok(None) => {
-            return None;
+impl ClientThread {
+    fn new(
+        thread_id: ThreadId,
+        client_addr: String,
+        command_sender: Sender<(ThreadId, Command)>,
+        response_receiver: Receiver<CommandResponse>,
+        stream: TcpStream,
+    ) -> Self {
+        let write_stream = stream.try_clone().expect("failed to clone stream");
+        let writer = BufWriter::new(write_stream);
+        let reader = BufReader::new(stream);
+        Self {
+            thread_id,
+            client_addr,
+            command_sender,
+            response_receiver,
+            writer,
+            reader,
         }
-        Err(e) => {
-            return Some(CommandResponse::Error(format!(
-                "error parsing message: {e}"
-            )));
+    }
+
+    fn run_loop(&mut self) {
+        if let Err(e) = self.loop_iteration() {
+            eprintln!("error in client thread: {e}");
         }
-    };
-    println!("received message: {message:?}");
+        println!("connection closed for addr {}", self.client_addr);
+    }
 
-    let command = match Command::parse_resp(&message) {
-        Ok(c) => c,
-        Err(e) => {
-            return Some(CommandResponse::Error(format!("error parsing RESP: {e}")));
+    fn loop_iteration(&mut self) -> Result<()> {
+        while let Some(response) = self.process_next_message() {
+            let response = response.to_resp();
+
+            println!("sending response: {response:?}");
+            response
+                .serialize_resp(&mut self.writer)
+                .expect("error in client thread");
+            self.writer.flush()?;
         }
-    };
-    println!("parsed command: {command:?}");
 
-    // Send command off to core, and await the response.
-    send_command
-        .send((thread_id, command))
-        .expect("failed to send command");
-    let response = recv_response.recv().expect("failed to receive response");
+        Ok(())
+    }
 
-    Some(response)
+    fn process_next_message(&mut self) -> Option<CommandResponse> {
+        let message = match Message::parse_resp(&mut self.reader) {
+            Ok(Some(m)) => m,
+            Ok(None) => {
+                return None;
+            }
+            Err(e) => {
+                return Some(CommandResponse::Error(format!(
+                    "error parsing message: {e}"
+                )));
+            }
+        };
+        println!("received message: {message:?}");
+
+        let command = match Command::parse_resp(&message) {
+            Ok(c) => c,
+            Err(e) => {
+                return Some(CommandResponse::Error(format!("error parsing RESP: {e}")));
+            }
+        };
+        println!("parsed command: {command:?}");
+
+        // Send command off to core, and await the response.
+        self.command_sender
+            .send((self.thread_id, command))
+            .expect("failed to send command");
+        let response = self
+            .response_receiver
+            .recv()
+            .expect("failed to receive response");
+
+        Some(response)
+    }
 }
 
 /// A `ServerCore` is primary command processor of the redis-clone server. It
@@ -171,13 +216,13 @@ struct ServerCore {
 }
 
 impl ServerCore {
-    pub fn new() -> Self {
+    fn new() -> Self {
         Self {
             key_value: HashMap::new(),
         }
     }
 
-    pub fn process_command(&mut self, command: Command) -> CommandResponse {
+    fn process_command(&mut self, command: Command) -> CommandResponse {
         match command {
             Command::Ping => CommandResponse::Pong,
             Command::Get(Get { key }) => {

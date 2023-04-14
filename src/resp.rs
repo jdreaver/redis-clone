@@ -31,7 +31,7 @@ impl Message {
         Self::BulkString(Some(RedisString::from(s)))
     }
 
-    pub fn serialize_resp<W>(&self, writer: &mut BufWriter<&mut W>) -> Result<()>
+    pub fn serialize_resp<W>(&self, writer: &mut BufWriter<W>) -> Result<()>
     where
         W: Write,
     {
