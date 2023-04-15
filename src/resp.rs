@@ -169,18 +169,14 @@ mod tests {
     fn assert_message_round_trip(msg: Message, expected: &[u8]) {
         let mut buf = Vec::new();
         msg.serialize_resp(&mut buf).unwrap();
-        // N.B. Strings give clearer error message
-        // assert_eq!(buf, expected);
-        assert_eq!(
-            String::from_utf8(buf.clone()),
-            String::from_utf8(expected.to_vec())
-        );
+        assert_eq!(buf, expected);
         let msg2 = Message::parse_resp(&mut buf.as_slice()).unwrap();
         assert_eq!(Some(msg), msg2);
     }
 
     #[test]
     fn simple_string_round_trip() {
+        assert_message_round_trip(Message::SimpleString("OK".to_string()), b"+OK\r\n");
         assert_message_round_trip(Message::SimpleString("OK".to_string()), b"+OK\r\n");
     }
 
@@ -203,6 +199,9 @@ mod tests {
             Message::BulkString(Some(RedisString::from("hello\r\nwith\r\nnewline"))),
             b"$20\r\nhello\r\nwith\r\nnewline\r\n",
         );
+
+        let non_utf8 = RedisString::from(vec![b'h', b'i', 0xFF, 0x00]);
+        assert_message_round_trip(Message::BulkString(Some(non_utf8)), b"$4\r\nhi\xff\x00\r\n");
     }
 
     #[test]
