@@ -159,6 +159,36 @@ mod tests {
 
     use std::io::BufReader;
 
+    use proptest::prelude::*;
+
+    fn arb_message() -> impl Strategy<Value = Message> {
+        // This looks spooky, but I took it from the proptest book JSON example:
+        // <https://altsysrq.github.io/proptest-book/proptest/tutorial/recursive.html>
+
+        let leaf = prop_oneof![
+            any::<String>().prop_map(Message::SimpleString),
+            any::<String>().prop_map(Message::Error),
+            any::<Option<Vec<u8>>>().prop_map(|b| Message::BulkString(b.map(RedisString::from))),
+        ];
+
+        leaf.prop_recursive(
+            8,   // 8 levels deep
+            256, // Shoot for maximum size of 256 nodes
+            10,  // We put up to 10 items per collection
+            |inner| prop::collection::vec(inner, 0..10).prop_map(Message::Array),
+        )
+    }
+
+    proptest! {
+        #[test]
+        fn round_trip(msg in arb_message()) {
+            let mut buf = Vec::new();
+            msg.serialize_resp(&mut buf).unwrap();
+            let got = Message::parse_resp(&mut buf.as_slice()).unwrap();
+            assert_eq!(Some(msg), got);
+        }
+    }
+
     #[test]
     fn parse_empty_string() {
         let mut buf = BufReader::new(b"" as &[u8]);
