@@ -11,40 +11,40 @@ Server:
 
 ```
 $ RUST_BACKTRACE=1 cargo run --bin server --release
-Listening on 127.0.0.1:6379
-connection received from 127.0.0.1:47384
-received message: Array([BulkString(Some("PING"))])
-parsed command: Ping
-core thread got command: [0] Ping
-core thread response: [0] Pong
-sending response: SimpleString("PONG")
-received message: Array([BulkString(Some("nonsense"))])
-sending response: Error("error parsing RESP: unknown command: nonsense")
-received message: Array([BulkString(Some("SET")), BulkString(Some("mykey")), BulkString(Some("hello"))])
-parsed command: Set(Set { key: "mykey", value: "hello" })
-core thread got command: [0] Set(Set { key: "mykey", value: "hello" })
-core thread response: [0] Ok
-sending response: SimpleString("OK")
-received message: Array([BulkString(Some("GET")), BulkString(Some("mykey"))])
-parsed command: Get(Get { key: "mykey" })
-core thread got command: [0] Get(Get { key: "mykey" })
-core thread response: [0] BulkString(Some("hello"))
-sending response: BulkString(Some("hello"))
-connection closed for addr 127.0.0.1:47384
+2023-04-15T15:12:31.053Z INFO  [redis_clone::server] Listening on 127.0.0.1:6379
+2023-04-15T15:12:37.413Z INFO  [redis_clone::server] connection received from 127.0.0.1:37974
+2023-04-15T15:12:37.414Z INFO  [redis_clone::server] received message: Array([BulkString(Some("PING"))])
+2023-04-15T15:12:37.414Z INFO  [redis_clone::server] parsed command: Ping
+2023-04-15T15:12:37.414Z INFO  [redis_clone::server] core thread got command: [0] Ping
+2023-04-15T15:12:37.414Z INFO  [redis_clone::server] core thread response: [0] Pong
+2023-04-15T15:12:37.414Z INFO  [redis_clone::server] sending response: SimpleString("PONG")
+2023-04-15T15:12:37.415Z INFO  [redis_clone::server] received message: Array([BulkString(Some("nonsense"))])
+2023-04-15T15:12:37.415Z INFO  [redis_clone::server] sending response: Error("error parsing RESP: unknown command: nonsense")
+2023-04-15T15:12:37.415Z INFO  [redis_clone::server] received message: Array([BulkString(Some("SET")), BulkString(Some("mykey")), BulkString(Some("hello"))])
+2023-04-15T15:12:37.415Z INFO  [redis_clone::server] parsed command: Set(Set { key: "mykey", value: "hello" })
+2023-04-15T15:12:37.415Z INFO  [redis_clone::server] core thread got command: [0] Set(Set { key: "mykey", value: "hello" })
+2023-04-15T15:12:37.415Z INFO  [redis_clone::server] core thread response: [0] Ok
+2023-04-15T15:12:37.415Z INFO  [redis_clone::server] sending response: SimpleString("OK")
+2023-04-15T15:12:37.415Z INFO  [redis_clone::server] received message: Array([BulkString(Some("GET")), BulkString(Some("mykey"))])
+2023-04-15T15:12:37.415Z INFO  [redis_clone::server] parsed command: Get(Get { key: "mykey" })
+2023-04-15T15:12:37.415Z INFO  [redis_clone::server] core thread got command: [0] Get(Get { key: "mykey" })
+2023-04-15T15:12:37.415Z INFO  [redis_clone::server] core thread response: [0] BulkString(Some("hello"))
+2023-04-15T15:12:37.415Z INFO  [redis_clone::server] sending response: BulkString(Some("hello"))
+2023-04-15T15:12:37.415Z INFO  [redis_clone::server] connection closed for addr 127.0.0.1:37974
 ```
 
 Client
 
 ```
 $ RUST_BACKTRACE=1 cargo run --bin client --release
-Command:  Ping
-Response: Pong
-Command:  RawCommand([BulkString(Some("nonsense"))])
-Response: Error("error parsing RESP: unknown command: nonsense")
-Command:  Set(Set { key: "mykey", value: "hello" })
-Response: Ok
-Command:  Get(Get { key: "mykey" })
-Response: BulkString(Some("hello"))
+2023-04-15T15:12:37.413Z INFO  [client] Command:  Ping
+2023-04-15T15:12:37.415Z INFO  [client] Response: Pong
+2023-04-15T15:12:37.415Z INFO  [client] Command:  RawCommand([BulkString(Some("nonsense"))])
+2023-04-15T15:12:37.415Z INFO  [client] Response: Error("error parsing RESP: unknown command: nonsense")
+2023-04-15T15:12:37.415Z INFO  [client] Command:  Set(Set { key: "mykey", value: "hello" })
+2023-04-15T15:12:37.415Z INFO  [client] Response: Ok
+2023-04-15T15:12:37.415Z INFO  [client] Command:  Get(Get { key: "mykey" })
+2023-04-15T15:12:37.415Z INFO  [client] Response: BulkString(Some("hello"))
 ```
 
 ## TODO

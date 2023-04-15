@@ -60,7 +60,7 @@ impl Server {
         self.start_core_worker_thread();
 
         let listener = TcpListener::bind(addr).wrap_err_with(|| eyre!("failed to start server"))?;
-        println!("Listening on {}", listener.local_addr()?);
+        log::info!("Listening on {}", listener.local_addr()?);
 
         loop {
             self.start_next_client_thread(&listener)?;
@@ -73,9 +73,9 @@ impl Server {
         thread::spawn(move || {
             let mut core = ServerCore::new();
             while let Ok((thread_id, command)) = command_receiver.recv() {
-                println!("core thread got command: [{thread_id}] {command:?}");
+                log::info!("core thread got command: [{thread_id}] {command:?}");
                 let response = core.process_command(command);
-                println!("core thread response: [{thread_id}] {response:?}");
+                log::info!("core thread response: [{thread_id}] {response:?}");
                 core_response_channels
                     .lock()
                     .expect("couldn't lock response channels")
@@ -92,7 +92,7 @@ impl Server {
     fn start_next_client_thread(&mut self, listener: &TcpListener) -> Result<()> {
         // Wait for a client to connect.
         let (stream, addr) = listener.accept()?;
-        println!("connection received from {addr}");
+        log::info!("connection received from {addr}");
 
         // Create thread ID and channel for this client.
         let (response_sender, response_receiver) =
@@ -154,16 +154,16 @@ impl ClientThread {
 
     fn run_loop(&mut self) {
         if let Err(e) = self.loop_iteration() {
-            eprintln!("error in client thread: {e}");
+            log::error!("error in client thread: {e}");
         }
-        println!("connection closed for addr {}", self.client_addr);
+        log::info!("connection closed for addr {}", self.client_addr);
     }
 
     fn loop_iteration(&mut self) -> Result<()> {
         while let Some(response) = self.process_next_message() {
             let response = response.to_resp();
 
-            println!("sending response: {response:?}");
+            log::info!("sending response: {response:?}");
             response
                 .serialize_resp(&mut self.writer)
                 .expect("error in client thread");
@@ -185,7 +185,7 @@ impl ClientThread {
                 )));
             }
         };
-        println!("received message: {message:?}");
+        log::info!("received message: {message:?}");
 
         let command = match Command::parse_resp(&message) {
             Ok(c) => c,
@@ -193,7 +193,7 @@ impl ClientThread {
                 return Some(CommandResponse::Error(format!("error parsing RESP: {e}")));
             }
         };
-        println!("parsed command: {command:?}");
+        log::info!("parsed command: {command:?}");
 
         // Send command off to core, and await the response.
         self.command_sender
