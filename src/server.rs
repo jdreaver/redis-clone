@@ -62,9 +62,12 @@ impl Server {
         let listener = TcpListener::bind(addr).wrap_err_with(|| eyre!("failed to start server"))?;
         log::info!("Listening on {}", listener.local_addr()?);
 
-        loop {
-            self.start_next_client_thread(&listener)?;
+        for stream in listener.incoming() {
+            let stream = stream?;
+            self.start_next_client_thread(stream)?;
         }
+
+        Ok(())
     }
 
     fn start_core_worker_thread(&mut self) {
@@ -89,9 +92,8 @@ impl Server {
         // TODO - handle shutdown
     }
 
-    fn start_next_client_thread(&mut self, listener: &TcpListener) -> Result<()> {
-        // Wait for a client to connect.
-        let (stream, addr) = listener.accept()?;
+    fn start_next_client_thread(&mut self, stream: TcpStream) -> Result<()> {
+        let addr = stream.peer_addr()?;
         log::info!("connection received from {addr}");
 
         // Create thread ID and channel for this client.
