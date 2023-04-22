@@ -1,6 +1,9 @@
 # Redis Clone
 
-Toy code for a [Redis](https://redis.io) clone.
+Toy code for a [Redis](https://redis.io) clone. The only neat feature really is
+a thread per client connection so IO is multiplexed, but a single, central
+worker thread to process commands. The central worker thread doesn't need
+locking so it is very fast.
 
 ## Running
 
